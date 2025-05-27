@@ -1,76 +1,81 @@
-# legacy-delphi-modules
+# Delphi Logical Record Locking Solution
 
-![Delphi](https://img.shields.io/badge/Delphi-Pascal-orange?style=flat)
-![License](https://img.shields.io/badge/license-No%20License-lightgrey)
+[![Delphi](https://img.shields.io/badge/Language-Delphi-blue.svg?style=flat&logo=delphi)](https://www.embarcadero.com/products/delphi)
+[![Logical Locking](https://img.shields.io/badge/Concept-Logical%20Locking-orange.svg?style=flat)](https://en.wikipedia.org/wiki/Concurrency_control#Locking)
+[![Database](https://img.shields.io/badge/Type-Database%20Solution-red.svg?style=flat)](https://en.wikipedia.org/wiki/Database)
+[![Concurrency Control](https://img.shields.io/badge/Feature-Concurrency%20Control-brightgreen.svg?style=flat)](https://en.wikipedia.org/wiki/Concurrency_control)
 
-> _Legacy Module Example: Logical Record Locking (Delphi)_
-
----
-
-## Overview
-
-This repository includes an example of a **core module** from a large-scale **legacy enterprise application**, fully implemented in **Delphi**.  
-Designed and developed entirely by me, this module addresses a **critical challenge** in enterprise systems:  
-> **Ensuring data integrity and controlling concurrent access in a multi-user environment.**
+This repository presents a robust **Delphi solution for implementing logical record locking**, designed to enhance data integrity and prevent concurrent modifications in multi-user environments, particularly within legacy web applications or systems relying on `TDataSet` components.
 
 ---
 
-## 🧩 The Problem  
+## 🛑 The Challenge of Data Integrity in Enterprise Applications
 
-In enterprise applications, it's common for multiple users to view and modify shared data.  
-Without proper safeguards, this leads to:
+In enterprise applications, multiple users often need to access and modify the same data simultaneously. This concurrent access, while necessary for business operations, poses a significant challenge: **maintaining data integrity**. Without proper mechanisms, two or more users could try to edit the same record at the same time, leading to lost updates, inconsistent data, or even application crashes.
 
-- **Data corruption**
-- **Lost updates**
-- **Inconsistent states**
+Imagine a scenario where two sales representatives are trying to update the stock quantity for the same product. If both read the current stock, deduct their sale, and then write the new quantity back, the last one to save their changes will overwrite the other's update. This results in an inaccurate stock count and potentially unfulfilled orders.
 
-A **robust logical record locking mechanism** is essential to **serialize access** and ensure consistent, safe operations.
+To prevent such issues, applications employ **concurrency control mechanisms**. While databases offer physical locking (e.g., row-level locks), these can sometimes be too restrictive or unsuitable for certain application architectures, especially in distributed or web-based systems where user interactions might span long periods. This is where **logical locking** comes into play. It's an application-level strategy that allows you to manage access to records based on your specific business rules, providing a more flexible and often more user-friendly approach to concurrency.
 
 ---
 
-## 💡 My Solution
+## 💡 How This Logical Locking Algorithm Works
 
-This component implements a **strict logical locking system**, with an emphasis on **data integrity** and **explicit control**.
+The core of this logical locking mechanism revolves around a dedicated **lock table** in your database. When a user attempts to acquire a lock on a record, the system follows a precise set of rules to determine if the lock can be granted, ensuring data consistency and providing intelligent handling of concurrent access:
 
-### Key Features:
+1.  **Initial Lock Acquisition**: A user can acquire a logical lock on a record if:
+    * There is **no existing entry** for that record in the lock table (i.e., the record has never been locked before).
+    * The **user's current session is the one that previously held the lock**, regardless of whether that previous lock has expired. This ensures that a user can safely re-acquire a lock on data they were already working on, preventing them from being locked out of their own work.
 
-- **Explicit Lock Acquisition and Release**  
-  Users or processes must **explicitly acquire** a lock before editing, and **explicitly release** it after.
+2.  **Timeout and Read-Only State**: If the lock acquisition attempt does not conclude successfully within a configurable **timeout period**, the system considers the operation failed, and the data is returned to the user in a **read-only state**. This prevents indefinite waiting and allows the application to remain responsive, informing the user that the record is currently unavailable for modification.
 
-- **Strict Lock Takeover Prevention**  
-  `AllowLockTakeover := False` ensures that no lock can be overridden.  
-  This protects users from losing work due to forced lock reassignment.
+3.  **Controlled Takeover (Takeover Logic)**: If the session attempting to acquire the lock is *different* from the one that currently holds the (potentially expired) lock, a **takeover is only permitted if the last logical lock expired *before* the timestamp when the current user read the data**. This crucial rule guarantees that the user always works with the absolute latest version of the data. If the previous lock expired *after* the data was read, it implies another user might have been actively working on it more recently, and a takeover would risk overwriting newer changes. By checking the `ReadTimeStamp` against the `Expiration` time of the last lock, we ensure the user is seeing the most up-to-date information before they're allowed to modify it.
 
-- **Concurrency Control**  
-  Only one user can hold a write lock on a record at any time.
-
-- **Modular Processor Design**  
-  Implemented as `TDataProcessor` derivatives:  
-  - `TProcAcquireReleaseLock`  
-  - `TProcOptimizeLockTable`  
-  Clean integration and well-defined I/O interfaces.
-
-- **Efficient Lock Management**  
-  Includes `OptimizeLockTable` procedure to clean up stale or orphaned locks and maintain DB efficiency.
+This algorithm strikes a balance between strict concurrency control and user experience, allowing for flexible access while strongly prioritizing **data integrity**.
 
 ---
 
-## 🧠 Why This Module Matters
+## 💻 Code Overview
 
-Although written in Delphi, this module demonstrates my ability to tackle **foundational software engineering problems**, including:
+The solution is encapsulated within the `uRecordLockHelper` unit, providing interfaces and classes for managing record locks.
 
-- **Concurrency & Resource Management**  
-  Solving real-world problems in complex, multi-user systems.
+### Key Components:
 
-- **System Architecture & Design**  
-  This is not just implementation — it's full **design** of a critical infrastructure component.
+* **`IRecordLock` & `IRecordLockVS`**: Base interfaces defining the fundamental capabilities for record locking, including properties for granular control like `RecordLockRequired`, `AllowLockTakeover`, and `ReadTimeStamp`.
+* **`IDataSetRecordLockVS` & `IXMLRecordLockVS`**: Specialized interfaces for acquiring locks from `TDataSet` components or `IXMLNode` (e.g., XML payloads), providing flexibility in data source integration.
+* **`IRecordLockProc`**: Interface for the back-end implementation of locking and unlocking procedures.
+* **`TRecordLockTable`**: A record structure defining the schema for the dedicated logical lock table in your database.
+* **`TLockInfo`**: A class to store the current lock status, including who locked it and when it expires.
+* **`IRecordIDsLoader`**: An interface for loading record identifiers from various sources, with concrete implementations for `TDataSet` (`TRecordIDsLoaderDataSet`) and `IXMLNode` (`TRecordIDsLoaderXMLNode`).
+* **`TRecordLockHelper`**: The main class that orchestrates the logical lock operations, interacting with the database to apply and release locks based on the defined algorithm. It primarily uses **`TADOQuery`** for database interactions and leverages SQL `MERGE` statements (or equivalent) for atomic lock acquisition and update.
 
-- **Enterprise-Grade Engineering**  
-  Designed for **mission-critical**, high-reliability systems.
+### Core Logic (`TRecordLockHelper.Lock` and `TRecordLockHelper.Unlock`):
 
-- **Language Versatility**  
-  Shows I can apply **engineering principles** effectively across platforms and languages.
+The `Lock` procedure implements the complex logic for acquiring a lock, utilizing parameterized SQL queries to:
+* Check for existing locks.
+* Apply the "same session" or "takeover" rules.
+* Update lock metadata (session ID, username, lock time, expiration).
+* Raise an error if the lock cannot be acquired due to concurrent access.
+
+The `Unlock` procedure simply sets the expiration time of the lock to `Now`, effectively releasing it and allowing other sessions to acquire it based on the takeover rules.
+
+### Thread Safety and Optimization:
+
+* **`TCriticalSection`**: Used to ensure thread-safe access to internal lists (`rlList`) when managing `TRecordLockHelper` class aliases, crucial in multi-threaded environments.
+* **`OptimizeLockTable`**: A class procedure designed to clean up expired locks from the lock table. This operation includes a `WARNING` regarding potential lock escalation on large tables, suggesting execution during off-peak hours and utilizing `ALTER INDEX ... REORGANIZE` for performance.
 
 ---
 
-> _A demonstration of robust backend design, real-world concurrency control, and pragmatic engineering in legacy enterprise environments._
+## 🚀 Getting Started
+
+To integrate this solution into your Delphi project:
+
+1.  **Define your Lock Table**: Ensure your database includes a table that matches the structure defined in `TRecordLockTable` (e.g., `RECORD_LOCKS` with fields like `RL_ID`, `SESSION_ID`, `RECORD_ID`, `USERNAME`, `TIME`, `EXPIRATION`, `ENTITY`).
+2.  **Integrate `TYourFrameworkBaseClass` and `TYourFrameworkSessionClass`**: Replace these placeholders with your actual base class and session management class, as the `TRecordLockHelper` relies on your application's connection and session context.
+3.  **Utilize `AcquireLock` and `ReleaseLock`**: Call the appropriate `AcquireLock` and `ReleaseLock` methods from your application logic when working with records that require concurrency control.
+
+---
+
+## 🤝 Contribution
+
+Feel free to explore, use, and provide feedback on this solution. If you have suggestions for improvements or encounter issues, please open an issue or pull request.
